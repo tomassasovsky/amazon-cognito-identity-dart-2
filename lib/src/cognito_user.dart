@@ -104,6 +104,13 @@ class CognitoUser {
     pool.storage = this.storage;
   }
 
+  /// Log credential clearing event with timestamp and reason
+  Future<void> logCredentialCleared(String reason) async {
+    final now = DateTime.now().toIso8601String();
+    final entryKey = '$keyPrefix.credentialsClearedLog.$now';
+    await storage.setItem(entryKey, reason);
+  }
+
   String get keyPrefix =>
       'CognitoIdentityServiceProvider.${pool.getClientId()}.$username';
 
@@ -321,7 +328,8 @@ class CognitoUser {
           await _analyticsMetadataParamsDecorator.call(paramsReq));
     } on CognitoClientException catch (e) {
       if (e.code == 'NotAuthorizedException') {
-        await clearCachedTokens();
+        await logCredentialCleared(
+            'refreshSession->NotAuthorizedException: ${e.message}');
       }
       rethrow;
     }
@@ -542,7 +550,7 @@ class CognitoUser {
       await client!.request('RevokeToken', paramsReq);
     }
     _signInUserSession = null;
-    await clearCachedTokens();
+    await clearCachedTokens('signOut');
   }
 
   /// This is used to globally revoke all tokens issued to a user
@@ -553,7 +561,7 @@ class CognitoUser {
       'AccessToken': _signInUserSession!.getAccessToken().getJwtToken(),
     };
     await client!.request('GlobalSignOut', paramsReq);
-    await clearCachedTokens();
+    await clearCachedTokens('globalSignOut');
   }
 
   Future<CognitoUserSession?> _authenticateUserPlainUsernamePassword(
@@ -1154,7 +1162,7 @@ class CognitoUser {
   }
 
   /// This is used to clear the session tokens from local storage
-  Future<void> clearCachedTokens() async {
+  Future<void> clearCachedTokens([String? reason]) async {
     final idTokenKey = '$keyPrefix.idToken';
     final accessTokenKey = '$keyPrefix.accessToken';
     final refreshTokenKey = '$keyPrefix.refreshToken';
@@ -1167,6 +1175,10 @@ class CognitoUser {
       storage.removeItem(clockDriftKey),
       storage.removeItem(pool.lastUserKey),
     ]);
+
+    if (reason != null) {
+      await logCredentialCleared(reason);
+    }
   }
 
   /// This is used to cache the device key and device group and device password
@@ -1256,7 +1268,7 @@ class CognitoUser {
       'AccessToken': _signInUserSession!.getAccessToken().getJwtToken(),
     };
     await client!.request('DeleteUser', paramsReq);
-    await clearCachedTokens();
+    await clearCachedTokens('deleteUser');
 
     return true;
   }
